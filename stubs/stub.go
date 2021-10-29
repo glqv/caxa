@@ -118,8 +118,13 @@ func main() {
 
 	expandedCommand := make([]string, len(footer.Command))
 	applicationDirectoryPlaceholderRegexp := regexp.MustCompile(`\{\{\s*caxa\s*\}\}`)
+	execPlaceholderRegexp := regexp.MustCompile(`\{\{\s*exec\s*\}\}`)
+	execPath, err := os.Executable()
+  if err != nil {
+  	panic(err)
+  }
 	for key, commandPart := range footer.Command {
-		expandedCommand[key] = applicationDirectoryPlaceholderRegexp.ReplaceAllLiteralString(commandPart, applicationDirectory)
+		expandedCommand[key] = applicationDirectoryPlaceholderRegexp.ReplaceAllLiteralString(execPlaceholderRegexp.ReplaceAllLiteralString(commandPart, execPath), applicationDirectory)
 	}
 
 	command := exec.Command(expandedCommand[0], append(expandedCommand[1:], os.Args[1:]...)...)
