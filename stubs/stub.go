@@ -15,7 +15,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -25,6 +24,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("caxa stub: Failed to find executable: %v", err)
 	}
+	executableDir := filepath.Dir(executableFile)
 
 	executable, err := os.ReadFile(executableFile)
 	if err != nil {
@@ -46,34 +46,15 @@ func main() {
 		log.Fatalf("caxa stub: Failed to parse JSON in footer: %v", err)
 	}
 
-	var applicationDirectory string
-	for extractionAttempt := 0; true; extractionAttempt++ {
-		lock := path.Join(os.TempDir(), "caxa/locks", footer.Identifier, strconv.Itoa(extractionAttempt))
-		applicationDirectory = path.Join(os.TempDir(), "caxa/applications", footer.Identifier, strconv.Itoa(extractionAttempt))
-		applicationDirectoryFileInfo, err := os.Stat(applicationDirectory)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Fatalf("caxa stub: Failed to find information about the application directory: %v", err)
-		}
-		if err == nil && !applicationDirectoryFileInfo.IsDir() {
-			log.Fatalf("caxa stub: Path to application directory already exists and isn’t a directory: %v", err)
-		}
-		if err == nil && applicationDirectoryFileInfo.IsDir() {
-			lockFileInfo, err := os.Stat(lock)
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				log.Fatalf("caxa stub: Failed to find information about the lock: %v", err)
-			}
-			if err == nil && !lockFileInfo.IsDir() {
-				log.Fatalf("caxa stub: Path to lock already exists and isn’t a directory: %v", err)
-			}
-			if err == nil && lockFileInfo.IsDir() {
-				// Application directory exists and lock exists as well, so a previous extraction wasn’t successful or an extraction is happening right now and hasn’t finished yet, in either case, start over with a fresh name.
-				continue
-			}
-			if err != nil && errors.Is(err, os.ErrNotExist) {
-				// Application directory exists and lock doesn’t exist, so a previous extraction was successful. Use the cached version of the application directory and don’t extract again.
-				break
-			}
-		}
+	applicationDirectory := path.Join(executableDir, footer.Identifier)
+	applicationDirectoryFileInfo, err := os.Stat(applicationDirectory)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Fatalf("caxa stub: Failed to find information about the application directory: %v", err)
+	}
+	if err == nil && !applicationDirectoryFileInfo.IsDir() {
+		log.Fatalf("caxa stub: Path to application directory already exists and isn’t a directory: %v", err)
+	}
+	if err != nil || !applicationDirectoryFileInfo.IsDir() {
 		if err != nil && errors.Is(err, os.ErrNotExist) {
 			ctx, cancelCtx := context.WithCancel(context.Background())
 			if footer.UncompressionMessage != "" {
@@ -93,10 +74,6 @@ func main() {
 				}()
 			}
 
-			if err := os.MkdirAll(lock, 0755); err != nil {
-				log.Fatalf("caxa stub: Failed to create the lock directory: %v", err)
-			}
-
 			// The use of ‘Repeat’ below is to make it even more improbable that the separator will appear literally in the compiled stub.
 			archiveSeparator := []byte("\n" + strings.Repeat("CAXA", 3) + "\n")
 			archiveIndex := bytes.Index(executable, archiveSeparator)
@@ -109,22 +86,15 @@ func main() {
 				log.Fatalf("caxa stub: Failed to uncompress archive: %v", err)
 			}
 
-			os.Remove(lock)
-
 			cancelCtx()
-			break
 		}
 	}
 
 	expandedCommand := make([]string, len(footer.Command))
 	applicationDirectoryPlaceholderRegexp := regexp.MustCompile(`\{\{\s*caxa\s*\}\}`)
 	execPlaceholderRegexp := regexp.MustCompile(`\{\{\s*exec\s*\}\}`)
-	execPath, err := os.Executable()
-  if err != nil {
-  	panic(err)
-  }
 	for key, commandPart := range footer.Command {
-		expandedCommand[key] = applicationDirectoryPlaceholderRegexp.ReplaceAllLiteralString(execPlaceholderRegexp.ReplaceAllLiteralString(commandPart, execPath), applicationDirectory)
+		expandedCommand[key] = applicationDirectoryPlaceholderRegexp.ReplaceAllLiteralString(execPlaceholderRegexp.ReplaceAllLiteralString(commandPart, executableFile), applicationDirectory)
 	}
 
 	command := exec.Command(expandedCommand[0], append(expandedCommand[1:], os.Args[1:]...)...)
